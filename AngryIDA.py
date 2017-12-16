@@ -6,27 +6,181 @@ inside of IDA Pro. The plug-in adds a sub menu, called AngryIDA, to
 IDA View-A's pop-up context menu. Inside the IDA View-A window
 right-click and expand the AngryIDA menu item to use.
 '''
+
 from __future__ import print_function
 import angr
 import idaapi #pylint: disable=import-error
+from idaapi import Form #pylint: disable=import-error
 
 FIND_ADDRS = []
 AVOID_ADDRS = []
+EXP_OPTS = {
+    "load":{
+        "auto_load_libs":False
+        },
+    "state":{
+        "discard_lazy_solves":True
+    },
+    "path_group":{
+        "immutable":False
+    },
+    "stdin":{
+        "length":-1,
+        "ascii":False,
+        "null":False,
+        "white_space":False,
+        "newline":True
+    }
+}
+
+class TestEmbeddedChooserClass(Choose2):
+    """
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
+    """
+    def __init__(self, title, nb=5, flags=0):
+        """
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
+        """
+        Choose2.__init__(
+            self,
+            title,
+            [["Address", 10], ["Name", 30]],
+            embedded=True,
+            width=30,
+            height=20,
+            flags=flags
+        )
+        self.n = 0
+        self.items = [self.make_item()]*(nb+1)
+        self.icon = 5
+        self.selcount = 0
+
+    def make_item(self):
+        """
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
+        """
+        r = [str(self.n), "func_%04d" % self.n]
+        self.n += 1
+        return r
+
+    def OnClose(self):
+        """
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
+        """
+        pass
+
+    def OnGetLine(self, n):
+        """
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
+        """
+        print("getline %d" % n)
+        return self.items[n]
+
+    def OnGetSize(self):
+        """
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
+        """
+        n = len(self.items)
+        print("getsize -> %d" % n)
+        return n
+
+class ExpForm(Form):
+    """
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
+    """
+    def __init__(self):
+        """
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
+        """
+        self.invert = False
+        self.EChooser = TestEmbeddedChooserClass("E1", flags=Choose2.CH_MULTI)
+        Form.__init__(self, r"""STARTITEM {id:rDiscardLazySolves}
+Options
+<Discard LAZY_SOLVES:{rDiscardLazySolves}>
+<Immutable:{rImmutable}>
+<Auto Load Libs:{rAutoLoadLibs}>{cGroup1}>
+
+Symbolic stdin
+<##Enter length of stdin:{iStdinLen}>
+<Ending newline:{rNewline}>
+<Allow Null:{rNull}>
+<White Space:{rWhite}>
+<Force ASCII:{rASCII}>{cGroup2}>
+""", {
+    'cGroup1': Form.ChkGroupControl(("rDiscardLazySolves", "rImmutable", "rAutoLoadLibs")),
+    'iStdinLen':Form.NumericInput(),
+    'cGroup2': Form.ChkGroupControl(("rNewline", "rNull", "rWhite", "rASCII"))
+    })
 
 class ActionHandler(idaapi.action_handler_t):
     """
-    TODO
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
     """
     def __init__(self, action):
         """
-        TODO
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
         """
         idaapi.action_handler_t.__init__(self)
         self.action = action
 
     def activate(self, ctx):
         """
-        TODO
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
         """
         if self.action == "Finds:Set":
             find_set()
@@ -41,7 +195,9 @@ class ActionHandler(idaapi.action_handler_t):
         elif self.action == "Avoids:Print":
             avoid_view()
         elif self.action == "Explore:Run":
-            explore()
+            explore_run()
+        elif self.action == "Explore:Options":
+            explore_options()
         elif self.action == "Refresh:Refresh":
             refresh()
         elif self.action == "Quit:Quit":
@@ -49,17 +205,33 @@ class ActionHandler(idaapi.action_handler_t):
 
     def update(self, ctx):
         """
-        TODO
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
         """
         return idaapi.AST_ENABLE_ALWAYS
 
 class Hooks(idaapi.UI_Hooks):
     """
-    TODO
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
     """
-    def finish_populating_tform_popup(self, form, popup):
+    @staticmethod
+    def finish_populating_tform_popup(form, popup):
         """
-        TODO
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
         """
         if idaapi.get_tform_title(form) == "IDA View-A":
             idaapi.attach_action_to_popup(form, popup, "Finds:Set", "AngryIDA/Finds/")
@@ -69,12 +241,12 @@ class Hooks(idaapi.UI_Hooks):
             idaapi.attach_action_to_popup(form, popup, "Avoids:Remove", "AngryIDA/Avoids/")
             idaapi.attach_action_to_popup(form, popup, "Avoids:Print", "AngryIDA/Avoids/")
             idaapi.attach_action_to_popup(form, popup, "Explore:Run", "AngryIDA/Explore/")
+            idaapi.attach_action_to_popup(form, popup, "Explore:Options", "AngryIDA/Explore/")
             idaapi.attach_action_to_popup(form, popup, "Refresh:Refresh", "AngryIDA/")
             idaapi.attach_action_to_popup(form, popup, "Quit:Quit", "AngryIDA/")
 
 def set_line_color(color, addr=here(), item=CIC_ITEM): #pylint: disable=undefined-variable
     """
-    Function: set_line_color
     Arguments:
         Mandatory:
             - ( Name: color,
@@ -134,16 +306,26 @@ def find_remove():
         print("AngryIDA: Removed find address [%s]" % hex(addr))
 
 def find_view():
-    '''
-    TODO
-    '''
+    """
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
+    """
     print("AngryIDA:\n\tFind Addresses")
     for addr in FIND_ADDRS:
         print("\t\t%s" % hex(addr))
 
 def avoid_set():
     """
-    TODO
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
     """
     addr = idaapi.get_screen_ea()
     if addr in FIND_ADDRS:
@@ -155,7 +337,12 @@ def avoid_set():
 
 def avoid_remove():
     """
-    TODO
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
     """
     addr = idaapi.get_screen_ea()
     if addr in AVOID_ADDRS:
@@ -164,44 +351,96 @@ def avoid_remove():
         print("AngryIDA: Removed avoid address [%s]" % hex(addr))
 
 def avoid_view():
-    '''
-    TODO
-    '''
+    """
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
+    """
     print("\tAvoid Addresses")
     for addr in AVOID_ADDRS:
         print("\t\t%s" % hex(addr))
 
-def explore():
+def explore_run():
     """
-    TODO
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
+        - Handle Symbolic Arguments
+        - Handle Multiple Symbolic stdin
+        - Handle Symbolic Files
+        - Handle Symbolic Memory
+        -
     """
     binary_file = idaapi.get_input_file_path()
-    proj = angr.Project(binary_file, load_options={"auto_load_libs":False})
+    proj = angr.Project(binary_file, load_options=EXP_OPTS["load"])
     initial_state = proj.factory.entry_state()
-    initial_state.options.discard("LAZY_SOLVES")
-    for _ in range(0, 32):
+
+    print(EXP_OPTS)
+
+    if EXP_OPTS["state"]["discard_lazy_solves"]:
+        initial_state.options.discard("LAZY_SOLVES")
+
+    for _ in range(0, EXP_OPTS["stdin"]["length"]-1):
         k = initial_state.posix.files[0].read_from(1)
-        initial_state.se.add(k != 0)
-        initial_state.se.add(k != 10)
+        if not EXP_OPTS["stdin"]["null"]:
+            initial_state.se.add(k != 0)
+        if not EXP_OPTS["stdin"]["white_space"]:
+            initial_state.se.add(k != 10)
 
-    # The last char of user input must be a newline
     k = initial_state.posix.files[0].read_from(1)
-    initial_state.se.add(k == 10)
+    if EXP_OPTS["stdin"]["newline"]:
+        initial_state.se.add(k == 10)
 
-    # Reset the stdin to the beginning, 0
     initial_state.posix.files[0].seek(0)
-    initial_state.posix.files[0].length = 33
+    initial_state.posix.files[0].length = EXP_OPTS["stdin"]["length"]
 
-    path_group = proj.factory.path_group(initial_state, immutable=False)
+    path_group = proj.factory.path_group(
+        initial_state,
+        immutable=EXP_OPTS["path_group"]["immutable"]
+    )
     path_group.explore(find=FIND_ADDRS, avoid=AVOID_ADDRS)
 
     found = path_group.found[0].state
     found.posix.files[0].seek(0)
-    print("Found: "+ found.se.any_str(found.posix.files[0].read_from(33)))
+    print("Found: "+ found.se.any_str(found.posix.files[0].read_from(EXP_OPTS["stdin"]["length"])))
+
+def explore_options():
+    """
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Better Rule Creation
+            - Setting specific locations
+        - Multiple stdin
+        - Symbolic Files
+        - Symbolic Arguments
+    """
+    EXP_FORM.Execute()
+    EXP_OPTS["state"]["discard_lazy_solves"] = EXP_FORM.rDiscardLazySolves.checked
+    EXP_OPTS["load"]["auto_load_libs"] = EXP_FORM.rAutoLoadLibs.checked
+    EXP_OPTS["path_group"]["immutable"] = EXP_FORM.rImmutable.checked
+    EXP_OPTS["stdin"]["newline"] = EXP_FORM.rNewline.checked
+    EXP_OPTS["stdin"]["null"] = EXP_FORM.rNull.checked
+    EXP_OPTS["stdin"]["ascii"] = EXP_FORM.rASCII.checked
+    EXP_OPTS["stdin"]["white_space"] = EXP_FORM.rWhite.checked
+    EXP_OPTS["stdin"]["length"] = EXP_FORM.iStdinLen.value
 
 def refresh():
     """
-    TODO
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
     """
     print(FIND_ADDRS, AVOID_ADDRS)
     for addr in FIND_ADDRS:
@@ -214,10 +453,32 @@ def refresh():
 
 def my_quit():
     """
-    TODO
+    Arguments: None
+    Return Value: None
+    Description:
+        -
+    TODO:
+        - Stop script
+        - Clean state
+        - Remove context menu
+        - Undo any hot-keys (No hot-keys used currently)
+        - Reset changes to IDA views (Color/highlighting)
+        - Description
     """
-    return 1
+    return None
 
+#------------------------------MAIN------------------------------------
+
+EXP_FORM = ExpForm()
+
+# Compile (in order to populate the controls)
+EXP_FORM.Compile()
+
+# Set some defaults
+EXP_FORM.rDiscardLazySolves.checked = True
+EXP_FORM.rNewline.checked = True
+
+# Create actions from context menu
 ACTION_FS = idaapi.action_desc_t('Finds:Set', 'Set', ActionHandler("Finds:Set"))
 ACTION_FR = idaapi.action_desc_t('Finds:Remove', 'Remove', ActionHandler("Finds:Remove"))
 ACTION_FP = idaapi.action_desc_t('Finds:Print', 'Print', ActionHandler("Finds:Print"))
@@ -225,9 +486,11 @@ ACTION_AS = idaapi.action_desc_t('Avoids:Set', 'Set', ActionHandler("Avoids:Set"
 ACTION_AR = idaapi.action_desc_t('Avoids:Remove', 'Remove', ActionHandler("Avoids:Remove"))
 ACTION_AP = idaapi.action_desc_t('Avoids:Print', 'Print', ActionHandler("Avoids:Print"))
 ACTION_ER = idaapi.action_desc_t('Explore:Run', 'Run', ActionHandler("Explore:Run"))
+ACTION_EO = idaapi.action_desc_t('Explore:Options', 'Options', ActionHandler("Explore:Options"))
 ACTION_RR = idaapi.action_desc_t('Refresh:Refresh', 'Refresh', ActionHandler("Refresh:Refresh"))
 ACTION_QQ = idaapi.action_desc_t('Quit:Quit', 'Quit', ActionHandler("Quit:Quit"))
 
+# Register Actions
 idaapi.register_action(ACTION_FS)
 idaapi.register_action(ACTION_FR)
 idaapi.register_action(ACTION_FP)
@@ -235,6 +498,7 @@ idaapi.register_action(ACTION_AS)
 idaapi.register_action(ACTION_AR)
 idaapi.register_action(ACTION_AP)
 idaapi.register_action(ACTION_ER)
+idaapi.register_action(ACTION_EO)
 idaapi.register_action(ACTION_RR)
 idaapi.register_action(ACTION_QQ)
 
