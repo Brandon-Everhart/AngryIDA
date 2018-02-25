@@ -1,6 +1,6 @@
 # AngryIDA
 
-![pylint Score](https://mperlet.github.io/pybadge/badges/8.50.svg) [![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg)](https://github.com/RichardLitt/standard-readme)  ![conduct](https://img.shields.io/badge/code%20of%20conduct-contributor%20covenant-brightgreen.svg) 
+![pylint Score](https://mperlet.github.io/pybadge/badges/8.11.svg) [![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg)](https://github.com/RichardLitt/standard-readme)  ![conduct](https://img.shields.io/badge/code%20of%20conduct-contributor%20covenant-brightgreen.svg) 
 
 | Table of Contents |
 |-------------------|
