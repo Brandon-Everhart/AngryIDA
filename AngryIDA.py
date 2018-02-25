@@ -9,20 +9,25 @@ right-click and expand the AngryIDA menu item to use.
 
 from __future__ import print_function
 import angr
+import claripy
 import idaapi #pylint: disable=import-error
 from idaapi import Form #pylint: disable=import-error
+
 
 FIND_ADDRS = []
 AVOID_ADDRS = []
 EXP_OPTS = {
     "load":{
         "auto_load_libs":False
-        },
+    },
     "state":{
         "discard_lazy_solves":True
     },
     "path_group":{
         "immutable":False
+    },
+    "time_limit":{
+        "minutes":10
     },
     "stdin":{
         "length":-1,
@@ -30,8 +35,40 @@ EXP_OPTS = {
         "null":False,
         "white_space":False,
         "newline":True
+    },
+    "args":{
+        "length":-1
     }
 }
+
+#----------------------------------------------------------------------------------
+# Possible solution to limiting angr exploring the binary. Ideas:
+#      - Limit time
+#      - Limit RAM
+#      - Limit CPU
+#
+# import sys
+# import thread
+# import threading
+# from time import sleep
+#
+# def quit_thread(fn_name):
+#     print('{0} took too long'.format(fn_name), file=sys.stderr)
+#     thread.interrupt_main()
+#
+# def time_limit(minutes):
+#     def decorate(fn):
+#         def internal(*args, **kwargs):
+#             timer = threading.Timer(minutes, quit_thread, args=[fn.__name__])
+#             timer.start()
+#             try:
+#                 result = fn(*args, **kwargs)
+#             finally:
+#                 timer.cancel()
+#             return result
+#         return internal
+#     return decorate
+#----------------------------------------------------------------------------------
 
 class TestEmbeddedChooserClass(Choose2):
     """
@@ -114,7 +151,7 @@ class TestEmbeddedChooserClass(Choose2):
         print("getsize -> %d" % n)
         return n
 
-class ExpForm(Form):
+class ExpFormOpts(Form):
     """
     Arguments:
     Return Value:
@@ -139,7 +176,33 @@ Options
 <Discard LAZY_SOLVES:{rDiscardLazySolves}>
 <Immutable:{rImmutable}>
 <Auto Load Libs:{rAutoLoadLibs}>{cGroup1}>
+<Time Limit:{iTimeLimit}>
+""", {
+    'cGroup1': Form.ChkGroupControl(("rDiscardLazySolves", "rImmutable", "rAutoLoadLibs")),
+    'iTimeLimit':Form.NumericInput(),
+    })
 
+class ExpFormStdin(Form):
+    """
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
+    """
+    def __init__(self):
+        """
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
+        """
+        self.invert = False
+        self.EChooser = TestEmbeddedChooserClass("E1", flags=Choose2.CH_MULTI)
+        Form.__init__(self, r"""STARTITEM
 Symbolic stdin
 <##Enter length of stdin:{iStdinLen}>
 <Ending newline:{rNewline}>
@@ -147,9 +210,35 @@ Symbolic stdin
 <White Space:{rWhite}>
 <Force ASCII:{rASCII}>{cGroup2}>
 """, {
-    'cGroup1': Form.ChkGroupControl(("rDiscardLazySolves", "rImmutable", "rAutoLoadLibs")),
     'iStdinLen':Form.NumericInput(),
     'cGroup2': Form.ChkGroupControl(("rNewline", "rNull", "rWhite", "rASCII"))
+    })
+
+class ExpFormArgs(Form):
+    """
+    Arguments:
+    Return Value:
+    Description:
+        -
+    TODO:
+        - Doc String
+    """
+    def __init__(self):
+        """
+        Arguments:
+        Return Value:
+        Description:
+            -
+        TODO:
+            - Doc String
+        """
+        self.invert = False
+        self.EChooser = TestEmbeddedChooserClass("E1", flags=Choose2.CH_MULTI)
+        Form.__init__(self, r"""STARTITEM
+Arguments 
+<##Enter length of argument:{iArgLen}>
+""", {
+    'iArgLen':Form.NumericInput()
     })
 
 class ActionHandler(idaapi.action_handler_t):
@@ -198,6 +287,10 @@ class ActionHandler(idaapi.action_handler_t):
             explore_run()
         elif self.action == "Explore:Options":
             explore_options()
+        elif self.action == "Explore:Stdin":
+            explore_stdin()
+        elif self.action == "Explore:Arguments":
+            explore_arguments()
         elif self.action == "Refresh:Refresh":
             refresh()
         elif self.action == "Quit:Quit":
@@ -242,6 +335,8 @@ class Hooks(idaapi.UI_Hooks):
             idaapi.attach_action_to_popup(form, popup, "Avoids:Print", "AngryIDA/Avoids/")
             idaapi.attach_action_to_popup(form, popup, "Explore:Run", "AngryIDA/Explore/")
             idaapi.attach_action_to_popup(form, popup, "Explore:Options", "AngryIDA/Explore/")
+            idaapi.attach_action_to_popup(form, popup, "Explore:Stdin", "AngryIDA/Explore/")
+            idaapi.attach_action_to_popup(form, popup, "Explore:Arguments", "AngryIDA/Explore/")
             idaapi.attach_action_to_popup(form, popup, "Refresh:Refresh", "AngryIDA/")
             idaapi.attach_action_to_popup(form, popup, "Quit:Quit", "AngryIDA/")
 
@@ -266,10 +361,10 @@ def set_line_color(color, addr=here(), item=CIC_ITEM): #pylint: disable=undefine
                 Value: IDA Item )
     Return: None
     Description:
-        Change instruction line color in IDA with specified color and address.
+        - Change instruction line color in IDA with specified color and address.
         Disabled pylint errors due to IDA function calls.
     TODO:
-        Nothing currently.
+        - Nothing currently.
     """
     SetColor(addr, item, color) #pylint: disable=undefined-variable
 
@@ -278,9 +373,11 @@ def find_set():
     Arguments: None
     Return Value: None
     Description:
-        - Toggles find address in list and color on screen.
+        - Function is called by the Finds:Set action and adds the address which is
+        currently selected in IDA View-A to the list of addresses angr will find
+        while exploring.
     TODO:
-        - Better description
+        - Nothing.
     """
     addr = idaapi.get_screen_ea()
     if addr in AVOID_ADDRS:
@@ -295,9 +392,11 @@ def find_remove():
     Arguments: None
     Return Value: None
     Description:
-        - Toggles find address in list and color on screen.
+        - Function is called by the Finds:Remove action and removes the address which
+        is currently selected in IDA View-A from the list of addresses angr will find
+        while exploring.
     TODO:
-        - Better description
+        - Nothing.
     """
     addr = idaapi.get_screen_ea()
     if addr in FIND_ADDRS:
@@ -307,12 +406,14 @@ def find_remove():
 
 def find_view():
     """
-    Arguments:
-    Return Value:
+    Arguments: None
+    Return Value: None
     Description:
-        -
+        - Function is called by the Finds:Print action and displays
+        all the address in the global FIND_ADDRS list. This is
+        displayed in the IDA Pro Output Window.
     TODO:
-        - Doc String
+        - Nothing
     """
     print("AngryIDA:\n\tFind Addresses")
     for addr in FIND_ADDRS:
@@ -323,9 +424,11 @@ def avoid_set():
     Arguments:
     Return Value:
     Description:
-        -
+        - Function is called by the Avoids:Set action and adds the address which is
+        currently selected in IDA View-A to the list of addresses angr will avoid
+        while exploring.
     TODO:
-        - Doc String
+        - Nothing.
     """
     addr = idaapi.get_screen_ea()
     if addr in FIND_ADDRS:
@@ -337,12 +440,14 @@ def avoid_set():
 
 def avoid_remove():
     """
-    Arguments:
-    Return Value:
+    Arguments: None
+    Return Value: None
     Description:
-        -
+        - Function is called by the Avoids:Remove action and removes the address
+        which is currently selected in IDA View-A from the list of addresses angr will
+        avoid while exploring.
     TODO:
-        - Doc String
+        - Nothing.
     """
     addr = idaapi.get_screen_ea()
     if addr in AVOID_ADDRS:
@@ -352,17 +457,20 @@ def avoid_remove():
 
 def avoid_view():
     """
-    Arguments:
-    Return Value:
+    Arguments: None
+    Return Value: None
     Description:
-        -
+        - Function is called by the Avoids:Print action and displays
+        all the address in the global AVOID_ADDRS list. This is
+        displayed in the IDA Pro Output Window.
     TODO:
-        - Doc String
+        - Nothing
     """
     print("\tAvoid Addresses")
     for addr in AVOID_ADDRS:
         print("\t\t%s" % hex(addr))
 
+#@time_limit(EXP_OPTS["time_limit"]["minutes"])
 def explore_run():
     """
     Arguments:
@@ -371,85 +479,130 @@ def explore_run():
         -
     TODO:
         - Doc String
-        - Handle Symbolic Arguments
+        - Handle Multiple Symbolic Arguments
         - Handle Multiple Symbolic stdin
+        - Force ASCII printable for stdin
         - Handle Symbolic Files
         - Handle Symbolic Memory
         -
     """
+    print(EXP_OPTS["time_limit"]["minutes"])
     binary_file = idaapi.get_input_file_path()
     proj = angr.Project(binary_file, load_options=EXP_OPTS["load"])
-    initial_state = proj.factory.entry_state()
 
-    print(EXP_OPTS)
+    arg_len = EXP_OPTS["args"]["length"]
+    if arg_len > 0:
+        argv1 = claripy.BVS("argv1", arg_len * 8)
+        initial_state = proj.factory.entry_state(args=[binary_file, argv1])
+    else:
+        initial_state = proj.factory.entry_state()
 
     if EXP_OPTS["state"]["discard_lazy_solves"]:
         initial_state.options.discard("LAZY_SOLVES")
 
-    for _ in range(0, EXP_OPTS["stdin"]["length"]-1):
+    stdin_len = EXP_OPTS["stdin"]["length"]
+    if stdin_len > 0:
+        for _ in range(0, stdin_len-1):
+            k = initial_state.posix.files[0].read_from(1)
+            if not EXP_OPTS["stdin"]["null"]:
+                initial_state.se.add(k != 0)
+            if not EXP_OPTS["stdin"]["white_space"]:
+                initial_state.se.add(k != 10)
+            #if EXP_OPTS["stdin"]["ascii"]:
+                # NEED TO FIX THIS
+                #initial_state.se.add(33 <= k)
+                #initial_state.se.add(k <= 126)
+
         k = initial_state.posix.files[0].read_from(1)
-        if not EXP_OPTS["stdin"]["null"]:
-            initial_state.se.add(k != 0)
-        if not EXP_OPTS["stdin"]["white_space"]:
-            initial_state.se.add(k != 10)
+        if EXP_OPTS["stdin"]["newline"]:
+            initial_state.se.add(k == 10)
 
-    k = initial_state.posix.files[0].read_from(1)
-    if EXP_OPTS["stdin"]["newline"]:
-        initial_state.se.add(k == 10)
+        initial_state.posix.files[0].seek(0)
+        initial_state.posix.files[0].length = stdin_len
 
-    initial_state.posix.files[0].seek(0)
-    initial_state.posix.files[0].length = EXP_OPTS["stdin"]["length"]
+    immutable = EXP_OPTS["path_group"]["immutable"]
+    sim_manager = proj.factory.simulation_manager(initial_state, immutable=immutable)
+    sim_manager.explore(find=FIND_ADDRS, avoid=AVOID_ADDRS)
 
-    path_group = proj.factory.path_group(
-        initial_state,
-        immutable=EXP_OPTS["path_group"]["immutable"]
-    )
-    path_group.explore(find=FIND_ADDRS, avoid=AVOID_ADDRS)
+    try:
+        found = sim_manager.found[0].state
+        found.posix.files[0].seek(0)
+        print("Found: "+ found.se.eval(found.posix.files[0].read_from(stdin_len), cast_to=str))
+    except IndexError:
+        print("No stdin found.")
 
-    found = path_group.found[0].state
-    found.posix.files[0].seek(0)
-    print("Found: "+ found.se.any_str(found.posix.files[0].read_from(EXP_OPTS["stdin"]["length"])))
+    try:
+        found = sim_manager.found[0]
+        print(found.state.se.eval(argv1, cast_to=str))
+    except IndexError:
+        print("No arguments found.")
 
 def explore_options():
     """
-    Arguments:
-    Return Value:
+    Arguments: None
+    Return Value: None
     Description:
         -
     TODO:
-        - Better Rule Creation
-            - Setting specific locations
-        - Multiple stdin
-        - Symbolic Files
-        - Symbolic Arguments
+        - Doc String.
     """
-    EXP_FORM.Execute()
-    EXP_OPTS["state"]["discard_lazy_solves"] = EXP_FORM.rDiscardLazySolves.checked
-    EXP_OPTS["load"]["auto_load_libs"] = EXP_FORM.rAutoLoadLibs.checked
-    EXP_OPTS["path_group"]["immutable"] = EXP_FORM.rImmutable.checked
-    EXP_OPTS["stdin"]["newline"] = EXP_FORM.rNewline.checked
-    EXP_OPTS["stdin"]["null"] = EXP_FORM.rNull.checked
-    EXP_OPTS["stdin"]["ascii"] = EXP_FORM.rASCII.checked
-    EXP_OPTS["stdin"]["white_space"] = EXP_FORM.rWhite.checked
-    EXP_OPTS["stdin"]["length"] = EXP_FORM.iStdinLen.value
+    EXP_FORM_OPTS.Execute()
+    EXP_OPTS["state"]["discard_lazy_solves"] = EXP_FORM_OPTS.rDiscardLazySolves.checked
+    EXP_OPTS["load"]["auto_load_libs"] = EXP_FORM_OPTS.rAutoLoadLibs.checked
+    EXP_OPTS["path_group"]["immutable"] = EXP_FORM_OPTS.rImmutable.checked
+    EXP_OPTS["time_limit"]["minutes"] = EXP_FORM_OPTS.iTimeLimit.value
+
+def explore_stdin():
+    """
+    Arguments: None
+    Return Value: None
+    Description:
+        -
+    TODO:
+        - Doc String.
+    """
+    EXP_FORM_STDIN.Execute()
+    EXP_OPTS["stdin"]["newline"] = EXP_FORM_STDIN.rNewline.checked
+    EXP_OPTS["stdin"]["null"] = EXP_FORM_STDIN.rNull.checked
+    EXP_OPTS["stdin"]["ascii"] = EXP_FORM_STDIN.rASCII.checked
+    EXP_OPTS["stdin"]["white_space"] = EXP_FORM_STDIN.rWhite.checked
+    EXP_OPTS["stdin"]["length"] = EXP_FORM_STDIN.iStdinLen.value
+
+def explore_arguments():
+    """
+    Arguments: None
+    Return Value: None
+    Description:
+        -
+    TODO:
+        - Doc String.
+    """
+    EXP_FORM_ARGS.Execute()
+    EXP_OPTS["args"]["length"] = EXP_FORM_ARGS.iArgLen.value
 
 def refresh():
     """
-    Arguments:
-    Return Value:
+    Arguments: None
+    Return Value: None
     Description:
-        -
+        - Function is called by the Refresh:Refresh action and removes
+        all the address in the global AVOID_ADDRS list and FIND_ADDRS list. Also
+        removes all colored addresses in IDA View-A. Success/Fail is displayed
+        in the IDA Pro Output Window.
     TODO:
-        - Doc String
+        - Nothing.
     """
-    print(FIND_ADDRS, AVOID_ADDRS)
     for addr in FIND_ADDRS:
         set_line_color(0xffffff, addr)
     del FIND_ADDRS[:]
     for addr in AVOID_ADDRS:
         set_line_color(0xffffff, addr)
     del AVOID_ADDRS[:]
-    print("AngryIDA: Refresh completed.")
+
+    if len(FIND_ADDRS) != 0 and len(AVOID_ADDRS) != 0:
+        print("AngryIDA: Refresh Failed")
+    else:
+        print("AngryIDA: Refresh completed.")
 
 def my_quit():
     """
@@ -468,15 +621,19 @@ def my_quit():
     return None
 
 #------------------------------MAIN------------------------------------
-
-EXP_FORM = ExpForm()
+EXP_FORM_OPTS = ExpFormOpts()
+EXP_FORM_STDIN = ExpFormStdin()
+EXP_FORM_ARGS = ExpFormArgs()
 
 # Compile (in order to populate the controls)
-EXP_FORM.Compile()
+EXP_FORM_OPTS.Compile()
+EXP_FORM_STDIN.Compile()
+EXP_FORM_ARGS.Compile()
 
 # Set some defaults
-EXP_FORM.rDiscardLazySolves.checked = True
-EXP_FORM.rNewline.checked = True
+EXP_FORM_OPTS.rDiscardLazySolves.checked = True
+EXP_FORM_OPTS.iTimeLimit.value = 10
+EXP_FORM_STDIN.rNewline.checked = True
 
 # Create actions from context menu
 ACTION_FS = idaapi.action_desc_t('Finds:Set', 'Set', ActionHandler("Finds:Set"))
@@ -487,6 +644,8 @@ ACTION_AR = idaapi.action_desc_t('Avoids:Remove', 'Remove', ActionHandler("Avoid
 ACTION_AP = idaapi.action_desc_t('Avoids:Print', 'Print', ActionHandler("Avoids:Print"))
 ACTION_ER = idaapi.action_desc_t('Explore:Run', 'Run', ActionHandler("Explore:Run"))
 ACTION_EO = idaapi.action_desc_t('Explore:Options', 'Options', ActionHandler("Explore:Options"))
+ACTION_ES = idaapi.action_desc_t('Explore:Stdin', 'Stdin', ActionHandler("Explore:Stdin"))
+ACTION_EA = idaapi.action_desc_t('Explore:Argument', 'Argument', ActionHandler("Explore:Argument"))
 ACTION_RR = idaapi.action_desc_t('Refresh:Refresh', 'Refresh', ActionHandler("Refresh:Refresh"))
 ACTION_QQ = idaapi.action_desc_t('Quit:Quit', 'Quit', ActionHandler("Quit:Quit"))
 
@@ -499,6 +658,8 @@ idaapi.register_action(ACTION_AR)
 idaapi.register_action(ACTION_AP)
 idaapi.register_action(ACTION_ER)
 idaapi.register_action(ACTION_EO)
+idaapi.register_action(ACTION_ES)
+idaapi.register_action(ACTION_EA)
 idaapi.register_action(ACTION_RR)
 idaapi.register_action(ACTION_QQ)
 
