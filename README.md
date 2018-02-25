@@ -121,7 +121,7 @@ _**NOTE: This section only describes the process of installation and setup in ou
 
 ## Contribute
 
-Any and all contributions are appertained! [Open an issue](https://github.com/Brandon-Everhart/AngryIDA/issues/new) or submit PRs.
+Any and all contributions are appreciated! [Open an issue](https://github.com/Brandon-Everhart/AngryIDA/issues/new) or submit PRs.
 
 ## Related Efforts
 
